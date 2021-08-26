@@ -10,12 +10,10 @@ from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as Navigat
 from matplotlib.ticker import MultipleLocator, FuncFormatter
 import pylab
 from matplotlib import pyplot
-from utils import get_img_from_video, read_data, StoppableThread
+from utils import get_img_from_video, read_data
 from wx.lib.embeddedimage import PyEmbeddedImage
 import _thread
 
-
-EVENT_LOCK = _thread.allocate_lock()
 
 class MPL_Panel_base(wx.Panel):
 
@@ -241,14 +239,11 @@ class MPL2_Frame(wx.Frame):
         self.FrameNumSum = -1
         self.FeedbackList = []  # 用户反馈闭眼与否的阈值记录
         
-        self.dis = 27  # 左右各展示的帧数
+        self.dis = 7  # 左右各展示的帧数
         self.left_bound = -1
         self.curFrameNum = 0
         self.right_bound = -1
 
-        self.thread = None
-        self.event_lock = _thread.allocate_lock()  # 分配锁对象,用作主线程告知子线程产生了点击事件
-        self.event_lock2 = _thread.allocate_lock()  # 分配锁对象,用作子线程告知主线程已经回收完毕，可以开始下一个子线程
         self.lock = _thread.allocate_lock()  # 分配锁对象,用作对红线操作设置临界区
 
         # using when test
@@ -256,7 +251,7 @@ class MPL2_Frame(wx.Frame):
         self.LoadVideo(None)
 
     def ShowFrameNum(self):
-        self.ShowFrame.SetLabel('当前帧：' + str(self.curFrameNum) + '/' + str(self.FrameNumSum))
+        self.ShowFrame.SetLabel('当前帧：(' + str(self.curFrameNum) + u'\u00B1' + str(self.dis) + ')/' + str(self.FrameNumSum))
 
     def FindFile(self, path_type):
         wildcard = 'All files(*.*)|*.*'
@@ -303,30 +298,19 @@ class MPL2_Frame(wx.Frame):
     def DynamicDisplay(self):
         '''动态展示红线及对应的视频帧'''
         self.lock.acquire()  # 获得锁
-        global EVENT_LOCK
+        i = 0
+        idx = i + self.left_bound
         while True:  # 只在线程中使用，循环展示直到线程结束
-            for i in range(self.left_bound, self.right_bound):
-                # 擦除上一条红线并画出新的红线
-                self.MPL1.rm_red_line()
-                self.MPL1.axv_red_line(i)
-                # 获取对应的视频帧并展示
-                img, fNUMS = get_img_from_video(self.VideoPath, i)
-                self.update_img(img)
-                self.ShowFrameNum()
-                # print(self.thread.stopped())
-                # if self.thread.stopped():  # 只在StoppableThread线程中使用，定期检测线程是否结束了
-                #     print("guest detecting stop_thread")
-                #     self.MPL1.rm_red_line()
-                #     self.lock.release()  # 释放锁
-                #     return
-                print(EVENT_LOCK.locked())
-                if not EVENT_LOCK.locked():  # 只在StoppableThread线程中使用，定期检测线程是否结束了
-                # if not self.event_lock.locked():  # 只在StoppableThread线程中使用，定期检测线程是否结束了
-                    print("guest detecting stop_thread")
-                    self.MPL1.rm_red_line()
-                    self.lock.release()  # 释放锁
-                    self.event_lock2.release()
-                    return
+            # 擦除上一条红线并画出新的红线
+            self.MPL1.rm_red_line()
+            self.MPL1.axv_red_line(idx)
+            # 获取对应的视频帧并展示
+            img, fNUMS = get_img_from_video(self.VideoPath, idx)
+            self.update_img(img)
+            self.ShowFrameNum()
+            i = (i + 1) % (self.right_bound - self.left_bound)
+            idx = i + self.left_bound
+            print("displaying {} frame".format(idx))
 
     def ShowImageonPoint(self, event):
         '''展示鼠标点击位置对应帧的视频'''
@@ -337,30 +321,10 @@ class MPL2_Frame(wx.Frame):
         self.right_bound = min(self.curFrameNum + self.dis, self.FrameNumSum)
         self.MPL1.rm_green_line()
         self.MPL1.axv_green_line(self.left_bound, self.curFrameNum, self.right_bound)
-        # 不使用线程
+        # # 不使用线程
         # self.DynamicDisplay()
-        # 使用StoppableThread
-        # if self.thread and not self.thread.stopped():
-        #     print("host stoping thread")
-        #     self.thread.stop()
-        #     # self.thread.join()
-        # 使用_thread的锁来同步主线程和子线程
-        # if self.event_lock.locked():
-        #     self.event_lock.release()
-        #     print("make event release")
-        global EVENT_LOCK
-        if EVENT_LOCK.locked():
-            EVENT_LOCK.release()
-            print("make event release")
-            print(EVENT_LOCK.locked())
-        self.thread = StoppableThread(target=MPL2_Frame.DynamicDisplay, args=(self,))
-        self.thread.start()
-        self.thread.tell_start()
         # 使用_thread
-        # _thread.start_new_thread(self.DynamicDisplay, (self,))
-        # self.event_lock2.acquire()
-        # self.event_lock.acquire()
-        EVENT_LOCK.acquire()
+        _thread.start_new_thread(MPL2_Frame.DynamicDisplay, (self,))
 
     def SortFeedbackList(self):
         '''将闭眼阈值反馈记录按照阈值大小进行排序'''
@@ -398,8 +362,6 @@ class MPL2_Frame(wx.Frame):
 if __name__ == '__main__':
     app = wx.App()
     frame = MPL2_Frame()
-    # thread = StoppableThread(target=frame.DynamicDisplay, args=(frame,))
-
     frame.Center()
     frame.Show()
     app.MainLoop()

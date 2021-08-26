@@ -1,13 +1,14 @@
+from sys import argv
 import cv2, threading
 from matplotlib.pyplot import margins
 from six import with_metaclass
 
  
 class StoppableThread(threading.Thread):
-    def __init__(self):
-        super(StoppableThread, self).__init__()
+    def __init__(self, target=None, args=()):
+        super(StoppableThread, self).__init__(target=target, args=args)
         self._stop_event = threading.Event()
-        self._stop_event.clear()
+        self._stop_event.set()
 
     def stop(self):
         self._stop_event.set()
